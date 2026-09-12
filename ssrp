@@ -1,0 +1,1495 @@
+local Players = game:GetService("Players")
+local Teams = game:GetService("Teams")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local GUI_NAME = "ThirdPersonCombatMenu"
+local AIM_KEY = Enum.UserInputType.MouseButton2
+local HIDE_KEY = Enum.KeyCode.RightShift
+
+local MAX_DISTANCE = 1500
+local FOV_MIN = 100
+local FOV_MAX = 800
+local SENSITIVITY_MIN = 1
+local SENSITIVITY_MAX = 20
+
+local SYSTEM_CLOSED = false
+local SYSTEM_HIDDEN = false
+
+local AIMBOT_ENABLED = true
+local AIM_TEAM_CHECK = true
+local WALL_CHECK = false
+
+local ESP_ENABLED = true
+local ESP_TEAM_CHECK = false
+local ESP_THROUGH_WALLS = true
+
+local SENSITIVITY = 6
+local FOV_SIZE = 280
+
+local currentTarget = nil
+local currentTargetPart = nil
+
+local aimRoleEnabled = {}
+local espRoleEnabled = {}
+local aimRoleButtons = {}
+local espRoleButtons = {}
+local playerHighlights = {}
+local playerConnections = {}
+local connections = {}
+
+local function track(connection)
+	table.insert(connections, connection)
+	return connection
+end
+
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local oldGui = PlayerGui:FindFirstChild(GUI_NAME)
+
+if oldGui then
+	oldGui:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = GUI_NAME
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder = 1000
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PlayerGui
+
+local FOV = Instance.new("Frame")
+FOV.Name = "FOV"
+FOV.AnchorPoint = Vector2.new(0.5, 0.5)
+FOV.Size = UDim2.fromOffset(FOV_SIZE, FOV_SIZE)
+FOV.BackgroundTransparency = 1
+FOV.BorderSizePixel = 0
+FOV.ZIndex = 1
+FOV.Parent = ScreenGui
+
+local FOVCorner = Instance.new("UICorner")
+FOVCorner.CornerRadius = UDim.new(1, 0)
+FOVCorner.Parent = FOV
+
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Thickness = 1.5
+FOVStroke.Transparency = 0.15
+FOVStroke.Color = Color3.fromRGB(238, 238, 244)
+FOVStroke.Parent = FOV
+
+local TargetDot = Instance.new("Frame")
+TargetDot.Name = "TargetDot"
+TargetDot.AnchorPoint = Vector2.new(0.5, 0.5)
+TargetDot.Size = UDim2.fromOffset(7, 7)
+TargetDot.BackgroundColor3 = Color3.fromRGB(255, 85, 130)
+TargetDot.BorderSizePixel = 0
+TargetDot.Visible = false
+TargetDot.ZIndex = 2
+TargetDot.Parent = ScreenGui
+
+local TargetDotCorner = Instance.new("UICorner")
+TargetDotCorner.CornerRadius = UDim.new(1, 0)
+TargetDotCorner.Parent = TargetDot
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.AnchorPoint = Vector2.new(0, 0.5)
+Main.Position = UDim2.new(0, 30, 0.5, 0)
+Main.Size = UDim2.fromOffset(760, 520)
+Main.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
+Main.BorderSizePixel = 0
+Main.ZIndex = 10
+Main.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = Main
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(48, 48, 58)
+MainStroke.Thickness = 1
+MainStroke.Transparency = 0.15
+MainStroke.Parent = Main
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 165, 1, 0)
+Sidebar.BackgroundColor3 = Color3.fromRGB(13, 13, 18)
+Sidebar.BorderSizePixel = 0
+Sidebar.ZIndex = 11
+Sidebar.Parent = Main
+
+local SidebarCorner = Instance.new("UICorner")
+SidebarCorner.CornerRadius = UDim.new(0, 12)
+SidebarCorner.Parent = Sidebar
+
+local SidebarFix = Instance.new("Frame")
+SidebarFix.Size = UDim2.new(0, 12, 1, 0)
+SidebarFix.Position = UDim2.new(1, -12, 0, 0)
+SidebarFix.BackgroundColor3 = Sidebar.BackgroundColor3
+SidebarFix.BorderSizePixel = 0
+SidebarFix.ZIndex = 11
+SidebarFix.Parent = Sidebar
+
+local SideTitle = Instance.new("TextLabel")
+SideTitle.Position = UDim2.fromOffset(18, 17)
+SideTitle.Size = UDim2.new(1, -36, 0, 24)
+SideTitle.BackgroundTransparency = 1
+SideTitle.Text = "COMBAT"
+SideTitle.TextColor3 = Color3.fromRGB(245, 245, 250)
+SideTitle.TextSize = 18
+SideTitle.Font = Enum.Font.GothamBold
+SideTitle.TextXAlignment = Enum.TextXAlignment.Left
+SideTitle.ZIndex = 12
+SideTitle.Parent = Sidebar
+
+local SideSubtitle = Instance.new("TextLabel")
+SideSubtitle.Position = UDim2.fromOffset(18, 42)
+SideSubtitle.Size = UDim2.new(1, -36, 0, 18)
+SideSubtitle.BackgroundTransparency = 1
+SideSubtitle.Text = "Third Person"
+SideSubtitle.TextColor3 = Color3.fromRGB(120, 120, 135)
+SideSubtitle.TextSize = 11
+SideSubtitle.Font = Enum.Font.Gotham
+SideSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+SideSubtitle.ZIndex = 12
+SideSubtitle.Parent = Sidebar
+
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Position = UDim2.fromOffset(165, 0)
+Header.Size = UDim2.new(1, -165, 0, 58)
+Header.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+Header.BorderSizePixel = 0
+Header.Active = true
+Header.ZIndex = 11
+Header.Parent = Main
+
+local HeaderTitle = Instance.new("TextLabel")
+HeaderTitle.Position = UDim2.fromOffset(20, 9)
+HeaderTitle.Size = UDim2.new(1, -90, 0, 23)
+HeaderTitle.BackgroundTransparency = 1
+HeaderTitle.Text = "Aimbot"
+HeaderTitle.TextColor3 = Color3.fromRGB(245, 245, 250)
+HeaderTitle.TextSize = 17
+HeaderTitle.Font = Enum.Font.GothamBold
+HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+HeaderTitle.ZIndex = 12
+HeaderTitle.Parent = Header
+
+local HeaderSubtitle = Instance.new("TextLabel")
+HeaderSubtitle.Position = UDim2.fromOffset(20, 32)
+HeaderSubtitle.Size = UDim2.new(1, -90, 0, 17)
+HeaderSubtitle.BackgroundTransparency = 1
+HeaderSubtitle.Text = "Right Click to lock • Right Shift to hide"
+HeaderSubtitle.TextColor3 = Color3.fromRGB(125, 125, 140)
+HeaderSubtitle.TextSize = 11
+HeaderSubtitle.Font = Enum.Font.Gotham
+HeaderSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+HeaderSubtitle.ZIndex = 12
+HeaderSubtitle.Parent = Header
+
+local ExitButton = Instance.new("TextButton")
+ExitButton.Name = "ExitButton"
+ExitButton.AnchorPoint = Vector2.new(1, 0)
+ExitButton.Position = UDim2.new(1, -14, 0, 13)
+ExitButton.Size = UDim2.fromOffset(32, 32)
+ExitButton.BackgroundColor3 = Color3.fromRGB(136, 42, 62)
+ExitButton.BorderSizePixel = 0
+ExitButton.AutoButtonColor = false
+ExitButton.Text = "×"
+ExitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ExitButton.TextSize = 22
+ExitButton.Font = Enum.Font.GothamBold
+ExitButton.ZIndex = 20
+ExitButton.Parent = Header
+
+local ExitCorner = Instance.new("UICorner")
+ExitCorner.CornerRadius = UDim.new(0, 7)
+ExitCorner.Parent = ExitButton
+
+local Content = Instance.new("Frame")
+Content.Position = UDim2.fromOffset(165, 58)
+Content.Size = UDim2.new(1, -165, 1, -58)
+Content.BackgroundTransparency = 1
+Content.ClipsDescendants = true
+Content.ZIndex = 11
+Content.Parent = Main
+
+local AimbotPage = Instance.new("Frame")
+AimbotPage.Name = "AimbotPage"
+AimbotPage.Size = UDim2.fromScale(1, 1)
+AimbotPage.BackgroundTransparency = 1
+AimbotPage.Visible = true
+AimbotPage.ZIndex = 11
+AimbotPage.Parent = Content
+
+local ESPPage = Instance.new("Frame")
+ESPPage.Name = "ESPPage"
+ESPPage.Size = UDim2.fromScale(1, 1)
+ESPPage.BackgroundTransparency = 1
+ESPPage.Visible = false
+ESPPage.ZIndex = 11
+ESPPage.Parent = Content
+
+local function createTabButton(text, y)
+	local Button = Instance.new("TextButton")
+	Button.Size = UDim2.new(1, -20, 0, 42)
+	Button.Position = UDim2.fromOffset(10, y)
+	Button.BackgroundColor3 = Color3.fromRGB(22, 22, 29)
+	Button.BackgroundTransparency = 1
+	Button.BorderSizePixel = 0
+	Button.AutoButtonColor = false
+	Button.Text = ""
+	Button.ZIndex = 12
+	Button.Parent = Sidebar
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 8)
+	Corner.Parent = Button
+
+	local Stripe = Instance.new("Frame")
+	Stripe.Position = UDim2.fromOffset(0, 8)
+	Stripe.Size = UDim2.fromOffset(3, 26)
+	Stripe.BackgroundColor3 = Color3.fromRGB(255, 80, 135)
+	Stripe.BorderSizePixel = 0
+	Stripe.Visible = false
+	Stripe.ZIndex = 13
+	Stripe.Parent = Button
+
+	local StripeCorner = Instance.new("UICorner")
+	StripeCorner.CornerRadius = UDim.new(1, 0)
+	StripeCorner.Parent = Stripe
+
+	local Label = Instance.new("TextLabel")
+	Label.Position = UDim2.fromOffset(15, 0)
+	Label.Size = UDim2.new(1, -20, 1, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = Color3.fromRGB(150, 150, 165)
+	Label.TextSize = 13
+	Label.Font = Enum.Font.GothamMedium
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.ZIndex = 13
+	Label.Parent = Button
+
+	return Button, Stripe, Label
+end
+
+local AimbotTab, AimbotStripe, AimbotTabLabel = createTabButton("Aimbot", 82)
+local ESPTab, ESPStripe, ESPTabLabel = createTabButton("ESP", 130)
+
+local function setTab(name)
+	local aimbotActive = name == "Aimbot"
+
+	AimbotPage.Visible = aimbotActive
+	ESPPage.Visible = not aimbotActive
+
+	AimbotStripe.Visible = aimbotActive
+	ESPStripe.Visible = not aimbotActive
+
+	AimbotTab.BackgroundTransparency = aimbotActive and 0 or 1
+	ESPTab.BackgroundTransparency = aimbotActive and 1 or 0
+
+	AimbotTabLabel.TextColor3 = aimbotActive and Color3.fromRGB(245, 245, 250) or Color3.fromRGB(150, 150, 165)
+	ESPTabLabel.TextColor3 = aimbotActive and Color3.fromRGB(150, 150, 165) or Color3.fromRGB(245, 245, 250)
+
+	HeaderTitle.Text = name
+	HeaderSubtitle.Text = aimbotActive
+		and "Right Click to lock • Right Shift to hide"
+		or "Role outlines • Right Shift to hide"
+end
+
+track(AimbotTab.MouseButton1Click:Connect(function()
+	setTab("Aimbot")
+end))
+
+track(ESPTab.MouseButton1Click:Connect(function()
+	setTab("ESP")
+end))
+
+setTab("Aimbot")
+
+local function createSectionLabel(parent, text, y)
+	local Label = Instance.new("TextLabel")
+	Label.Position = UDim2.fromOffset(18, y)
+	Label.Size = UDim2.new(1, -36, 0, 18)
+	Label.BackgroundTransparency = 1
+	Label.Text = string.upper(text)
+	Label.TextColor3 = Color3.fromRGB(115, 115, 130)
+	Label.TextSize = 10
+	Label.Font = Enum.Font.GothamBold
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.ZIndex = 12
+	Label.Parent = parent
+	return Label
+end
+
+local function createToggle(parent, y, title, description, initialState, callback)
+	local Row = Instance.new("Frame")
+	Row.Position = UDim2.fromOffset(18, y)
+	Row.Size = UDim2.new(1, -36, 0, 46)
+	Row.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+	Row.BorderSizePixel = 0
+	Row.ZIndex = 12
+	Row.Parent = parent
+
+	local RowCorner = Instance.new("UICorner")
+	RowCorner.CornerRadius = UDim.new(0, 8)
+	RowCorner.Parent = Row
+
+	local Title = Instance.new("TextLabel")
+	Title.Position = UDim2.fromOffset(12, 6)
+	Title.Size = UDim2.new(1, -90, 0, 18)
+	Title.BackgroundTransparency = 1
+	Title.Text = title
+	Title.TextColor3 = Color3.fromRGB(235, 235, 242)
+	Title.TextSize = 12
+	Title.Font = Enum.Font.GothamMedium
+	Title.TextXAlignment = Enum.TextXAlignment.Left
+	Title.ZIndex = 13
+	Title.Parent = Row
+
+	local Description = Instance.new("TextLabel")
+	Description.Position = UDim2.fromOffset(12, 24)
+	Description.Size = UDim2.new(1, -90, 0, 15)
+	Description.BackgroundTransparency = 1
+	Description.Text = description
+	Description.TextColor3 = Color3.fromRGB(115, 115, 128)
+	Description.TextSize = 10
+	Description.Font = Enum.Font.Gotham
+	Description.TextXAlignment = Enum.TextXAlignment.Left
+	Description.ZIndex = 13
+	Description.Parent = Row
+
+	local Switch = Instance.new("TextButton")
+	Switch.AnchorPoint = Vector2.new(1, 0.5)
+	Switch.Position = UDim2.new(1, -12, 0.5, 0)
+	Switch.Size = UDim2.fromOffset(48, 24)
+	Switch.BorderSizePixel = 0
+	Switch.Text = ""
+	Switch.AutoButtonColor = false
+	Switch.ZIndex = 14
+	Switch.Parent = Row
+
+	local SwitchCorner = Instance.new("UICorner")
+	SwitchCorner.CornerRadius = UDim.new(1, 0)
+	SwitchCorner.Parent = Switch
+
+	local Knob = Instance.new("Frame")
+	Knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	Knob.Size = UDim2.fromOffset(18, 18)
+	Knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
+	Knob.BorderSizePixel = 0
+	Knob.ZIndex = 15
+	Knob.Parent = Switch
+
+	local KnobCorner = Instance.new("UICorner")
+	KnobCorner.CornerRadius = UDim.new(1, 0)
+	KnobCorner.Parent = Knob
+
+	local state = initialState
+
+	local function render()
+		Switch.BackgroundColor3 = state and Color3.fromRGB(255, 80, 135) or Color3.fromRGB(59, 59, 70)
+		Knob.Position = state and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 12, 0.5, 0)
+	end
+
+	track(Switch.MouseButton1Click:Connect(function()
+		state = not state
+		render()
+		callback(state)
+	end))
+
+	render()
+
+	return {
+		Set = function(value)
+			state = value
+			render()
+			callback(state)
+		end,
+		Get = function()
+			return state
+		end
+	}
+end
+
+local function createSlider(parent, y, title, minValue, maxValue, initialValue, formatter, callback)
+	local Row = Instance.new("Frame")
+	Row.Position = UDim2.fromOffset(18, y)
+	Row.Size = UDim2.new(1, -36, 0, 64)
+	Row.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+	Row.BorderSizePixel = 0
+	Row.ZIndex = 12
+	Row.Parent = parent
+
+	local RowCorner = Instance.new("UICorner")
+	RowCorner.CornerRadius = UDim.new(0, 8)
+	RowCorner.Parent = Row
+
+	local Title = Instance.new("TextLabel")
+	Title.Position = UDim2.fromOffset(12, 8)
+	Title.Size = UDim2.new(1, -100, 0, 18)
+	Title.BackgroundTransparency = 1
+	Title.Text = title
+	Title.TextColor3 = Color3.fromRGB(235, 235, 242)
+	Title.TextSize = 12
+	Title.Font = Enum.Font.GothamMedium
+	Title.TextXAlignment = Enum.TextXAlignment.Left
+	Title.ZIndex = 13
+	Title.Parent = Row
+
+	local ValueLabel = Instance.new("TextLabel")
+	ValueLabel.AnchorPoint = Vector2.new(1, 0)
+	ValueLabel.Position = UDim2.new(1, -12, 0, 8)
+	ValueLabel.Size = UDim2.fromOffset(76, 18)
+	ValueLabel.BackgroundTransparency = 1
+	ValueLabel.TextColor3 = Color3.fromRGB(255, 100, 145)
+	ValueLabel.TextSize = 12
+	ValueLabel.Font = Enum.Font.GothamBold
+	ValueLabel.TextXAlignment = Enum.TextXAlignment.Right
+	ValueLabel.ZIndex = 13
+	ValueLabel.Parent = Row
+
+	local Track = Instance.new("Frame")
+	Track.Position = UDim2.fromOffset(13, 41)
+	Track.Size = UDim2.new(1, -26, 0, 5)
+	Track.BackgroundColor3 = Color3.fromRGB(58, 58, 69)
+	Track.BorderSizePixel = 0
+	Track.ZIndex = 13
+	Track.Parent = Row
+
+	local TrackCorner = Instance.new("UICorner")
+	TrackCorner.CornerRadius = UDim.new(1, 0)
+	TrackCorner.Parent = Track
+
+	local Fill = Instance.new("Frame")
+	Fill.Size = UDim2.new(0, 0, 1, 0)
+	Fill.BackgroundColor3 = Color3.fromRGB(255, 80, 135)
+	Fill.BorderSizePixel = 0
+	Fill.ZIndex = 14
+	Fill.Parent = Track
+
+	local FillCorner = Instance.new("UICorner")
+	FillCorner.CornerRadius = UDim.new(1, 0)
+	FillCorner.Parent = Fill
+
+	local Knob = Instance.new("Frame")
+	Knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	Knob.Size = UDim2.fromOffset(15, 15)
+	Knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
+	Knob.BorderSizePixel = 0
+	Knob.ZIndex = 15
+	Knob.Parent = Track
+
+	local KnobCorner = Instance.new("UICorner")
+	KnobCorner.CornerRadius = UDim.new(1, 0)
+	KnobCorner.Parent = Knob
+
+	local Hitbox = Instance.new("TextButton")
+	Hitbox.Position = UDim2.fromOffset(8, 30)
+	Hitbox.Size = UDim2.new(1, -16, 0, 30)
+	Hitbox.BackgroundTransparency = 1
+	Hitbox.BorderSizePixel = 0
+	Hitbox.Text = ""
+	Hitbox.ZIndex = 16
+	Hitbox.Parent = Row
+
+	local value = initialValue
+	local dragging = false
+
+	local function setValue(newValue)
+		value = math.clamp(math.floor(newValue + 0.5), minValue, maxValue)
+		local alpha = (value - minValue) / (maxValue - minValue)
+
+		Fill.Size = UDim2.new(alpha, 0, 1, 0)
+		Knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+		ValueLabel.Text = formatter(value)
+
+		callback(value)
+	end
+
+	local function setFromX(screenX)
+		local width = Track.AbsoluteSize.X
+
+		if width <= 0 then
+			return
+		end
+
+		local alpha = math.clamp((screenX - Track.AbsolutePosition.X) / width, 0, 1)
+		setValue(minValue + (maxValue - minValue) * alpha)
+	end
+
+	track(Hitbox.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+
+			dragging = true
+			setFromX(input.Position.X)
+		end
+	end))
+
+	track(UserInputService.InputChanged:Connect(function(input)
+		if not dragging then
+			return
+		end
+
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+
+			setFromX(input.Position.X)
+		end
+	end))
+
+	track(UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+
+			dragging = false
+		end
+	end))
+
+	setValue(initialValue)
+
+	return {
+		Set = setValue,
+		Get = function()
+			return value
+		end
+	}
+end
+
+createSectionLabel(AimbotPage, "Aimbot Settings", 13)
+
+createToggle(
+	AimbotPage,
+	36,
+	"Aimbot Enabled",
+	"Hold right click to lock onto the nearest valid head",
+	AIMBOT_ENABLED,
+	function(value)
+		AIMBOT_ENABLED = value
+
+		if not value then
+			currentTarget = nil
+			currentTargetPart = nil
+			TargetDot.Visible = false
+		end
+	end
+)
+
+createToggle(
+	AimbotPage,
+	87,
+	"Team Check",
+	"Ignore players on your current Roblox team",
+	AIM_TEAM_CHECK,
+	function(value)
+		AIM_TEAM_CHECK = value
+		currentTarget = nil
+		currentTargetPart = nil
+	end
+)
+
+createToggle(
+	AimbotPage,
+	138,
+	"Wall Check",
+	"Only lock onto heads with a clear line of sight",
+	WALL_CHECK,
+	function(value)
+		WALL_CHECK = value
+		currentTarget = nil
+		currentTargetPart = nil
+	end
+)
+
+createSlider(
+	AimbotPage,
+	189,
+	"Aim Sensitivity",
+	SENSITIVITY_MIN,
+	SENSITIVITY_MAX,
+	SENSITIVITY,
+	function(value)
+		return tostring(value)
+	end,
+	function(value)
+		SENSITIVITY = value
+	end
+)
+
+createSlider(
+	AimbotPage,
+	258,
+	"FOV Size",
+	FOV_MIN,
+	FOV_MAX,
+	FOV_SIZE,
+	function(value)
+		return tostring(value) .. " px"
+	end,
+	function(value)
+		FOV_SIZE = value
+		FOV.Size = UDim2.fromOffset(FOV_SIZE, FOV_SIZE)
+	end
+)
+
+createSectionLabel(AimbotPage, "Aimbot Role Filter", 329)
+
+local AimRoleList = Instance.new("ScrollingFrame")
+AimRoleList.Position = UDim2.fromOffset(18, 351)
+AimRoleList.Size = UDim2.new(1, -36, 1, -365)
+AimRoleList.BackgroundColor3 = Color3.fromRGB(21, 21, 27)
+AimRoleList.BorderSizePixel = 0
+AimRoleList.ScrollBarThickness = 3
+AimRoleList.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 115)
+AimRoleList.CanvasSize = UDim2.new()
+AimRoleList.ZIndex = 12
+AimRoleList.Parent = AimbotPage
+
+local AimRoleCorner = Instance.new("UICorner")
+AimRoleCorner.CornerRadius = UDim.new(0, 8)
+AimRoleCorner.Parent = AimRoleList
+
+local AimRolePadding = Instance.new("UIPadding")
+AimRolePadding.PaddingTop = UDim.new(0, 7)
+AimRolePadding.PaddingBottom = UDim.new(0, 7)
+AimRolePadding.PaddingLeft = UDim.new(0, 7)
+AimRolePadding.PaddingRight = UDim.new(0, 7)
+AimRolePadding.Parent = AimRoleList
+
+local AimRoleLayout = Instance.new("UIListLayout")
+AimRoleLayout.Padding = UDim.new(0, 6)
+AimRoleLayout.SortOrder = Enum.SortOrder.Name
+AimRoleLayout.Parent = AimRoleList
+
+createSectionLabel(ESPPage, "ESP Settings", 13)
+
+createToggle(
+	ESPPage,
+	36,
+	"ESP Enabled",
+	"Draw an outline around enabled player roles",
+	ESP_ENABLED,
+	function(value)
+		ESP_ENABLED = value
+	end
+)
+
+createToggle(
+	ESPPage,
+	87,
+	"Team Check",
+	"Hide outlines for players on your current team",
+	ESP_TEAM_CHECK,
+	function(value)
+		ESP_TEAM_CHECK = value
+	end
+)
+
+createToggle(
+	ESPPage,
+	138,
+	"Through Walls",
+	"Keep player outlines visible behind map geometry",
+	ESP_THROUGH_WALLS,
+	function(value)
+		ESP_THROUGH_WALLS = value
+	end
+)
+
+createSectionLabel(ESPPage, "ESP Role Filter", 197)
+
+local ESPRoleList = Instance.new("ScrollingFrame")
+ESPRoleList.Position = UDim2.fromOffset(18, 219)
+ESPRoleList.Size = UDim2.new(1, -36, 1, -233)
+ESPRoleList.BackgroundColor3 = Color3.fromRGB(21, 21, 27)
+ESPRoleList.BorderSizePixel = 0
+ESPRoleList.ScrollBarThickness = 3
+ESPRoleList.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 115)
+ESPRoleList.CanvasSize = UDim2.new()
+ESPRoleList.ZIndex = 12
+ESPRoleList.Parent = ESPPage
+
+local ESPRoleCorner = Instance.new("UICorner")
+ESPRoleCorner.CornerRadius = UDim.new(0, 8)
+ESPRoleCorner.Parent = ESPRoleList
+
+local ESPRolePadding = Instance.new("UIPadding")
+ESPRolePadding.PaddingTop = UDim.new(0, 7)
+ESPRolePadding.PaddingBottom = UDim.new(0, 7)
+ESPRolePadding.PaddingLeft = UDim.new(0, 7)
+ESPRolePadding.PaddingRight = UDim.new(0, 7)
+ESPRolePadding.Parent = ESPRoleList
+
+local ESPRoleLayout = Instance.new("UIListLayout")
+ESPRoleLayout.Padding = UDim.new(0, 6)
+ESPRoleLayout.SortOrder = Enum.SortOrder.Name
+ESPRoleLayout.Parent = ESPRoleList
+
+local function updateRoleCanvases()
+	AimRoleList.CanvasSize = UDim2.fromOffset(0, AimRoleLayout.AbsoluteContentSize.Y + 14)
+	ESPRoleList.CanvasSize = UDim2.fromOffset(0, ESPRoleLayout.AbsoluteContentSize.Y + 14)
+end
+
+track(AimRoleLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateRoleCanvases))
+track(ESPRoleLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateRoleCanvases))
+
+local function createRoleButton(list, roleName, roleColor, stateTable, buttonTable, onChanged)
+	if buttonTable[roleName] then
+		return
+	end
+
+	if stateTable[roleName] == nil then
+		stateTable[roleName] = true
+	end
+
+	local Button = Instance.new("TextButton")
+	Button.Name = roleName
+	Button.Size = UDim2.new(1, -2, 0, 38)
+	Button.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+	Button.BorderSizePixel = 0
+	Button.AutoButtonColor = false
+	Button.Text = ""
+	Button.ZIndex = 13
+	Button.Parent = list
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 7)
+	Corner.Parent = Button
+
+	local Stripe = Instance.new("Frame")
+	Stripe.Position = UDim2.fromOffset(6, 7)
+	Stripe.Size = UDim2.fromOffset(3, 24)
+	Stripe.BackgroundColor3 = roleColor
+	Stripe.BorderSizePixel = 0
+	Stripe.ZIndex = 14
+	Stripe.Parent = Button
+
+	local StripeCorner = Instance.new("UICorner")
+	StripeCorner.CornerRadius = UDim.new(1, 0)
+	StripeCorner.Parent = Stripe
+
+	local Label = Instance.new("TextLabel")
+	Label.Position = UDim2.fromOffset(17, 0)
+	Label.Size = UDim2.new(1, -85, 1, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = roleName
+	Label.TextColor3 = roleColor
+	Label.TextSize = 12
+	Label.Font = Enum.Font.GothamMedium
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.ZIndex = 14
+	Label.Parent = Button
+
+	local Status = Instance.new("TextLabel")
+	Status.AnchorPoint = Vector2.new(1, 0.5)
+	Status.Position = UDim2.new(1, -8, 0.5, 0)
+	Status.Size = UDim2.fromOffset(50, 22)
+	Status.BorderSizePixel = 0
+	Status.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Status.TextSize = 10
+	Status.Font = Enum.Font.GothamBold
+	Status.ZIndex = 14
+	Status.Parent = Button
+
+	local StatusCorner = Instance.new("UICorner")
+	StatusCorner.CornerRadius = UDim.new(0, 6)
+	StatusCorner.Parent = Status
+
+	local function render()
+		local enabled = stateTable[roleName]
+
+		Status.Text = enabled and "ON" or "OFF"
+		Status.BackgroundColor3 = enabled and Color3.fromRGB(45, 145, 86) or Color3.fromRGB(125, 45, 60)
+		Button.BackgroundTransparency = enabled and 0 or 0.35
+		Label.TextTransparency = enabled and 0 or 0.45
+		Stripe.BackgroundTransparency = enabled and 0 or 0.5
+	end
+
+	track(Button.MouseButton1Click:Connect(function()
+		stateTable[roleName] = not stateTable[roleName]
+		render()
+		onChanged(roleName, stateTable[roleName])
+	end))
+
+	buttonTable[roleName] = Button
+	render()
+	updateRoleCanvases()
+end
+
+local function getRoleName(player)
+	if player.Team then
+		return player.Team.Name
+	end
+
+	return "NO TEAM"
+end
+
+local function getRoleColor(player)
+	if player.Team then
+		return player.Team.TeamColor.Color
+	end
+
+	return Color3.fromRGB(175, 175, 185)
+end
+
+local function createRoleEverywhere(roleName, roleColor)
+	createRoleButton(
+		AimRoleList,
+		roleName,
+		roleColor,
+		aimRoleEnabled,
+		aimRoleButtons,
+		function(changedRole, enabled)
+			if currentTarget and getRoleName(currentTarget) == changedRole and not enabled then
+				currentTarget = nil
+				currentTargetPart = nil
+				TargetDot.Visible = false
+			end
+		end
+	)
+
+	createRoleButton(
+		ESPRoleList,
+		roleName,
+		roleColor,
+		espRoleEnabled,
+		espRoleButtons,
+		function()
+		end
+	)
+end
+
+local function removeRoleEverywhere(roleName)
+	local aimButton = aimRoleButtons[roleName]
+	local espButton = espRoleButtons[roleName]
+
+	if aimButton then
+		aimButton:Destroy()
+		aimRoleButtons[roleName] = nil
+	end
+
+	if espButton then
+		espButton:Destroy()
+		espRoleButtons[roleName] = nil
+	end
+
+	aimRoleEnabled[roleName] = nil
+	espRoleEnabled[roleName] = nil
+
+	updateRoleCanvases()
+end
+
+for _, team in ipairs(Teams:GetChildren()) do
+	if team:IsA("Team") then
+		createRoleEverywhere(team.Name, team.TeamColor.Color)
+	end
+end
+
+createRoleEverywhere("NO TEAM", Color3.fromRGB(160, 160, 172))
+
+track(Teams.ChildAdded:Connect(function(team)
+	if team:IsA("Team") then
+		createRoleEverywhere(team.Name, team.TeamColor.Color)
+	end
+end))
+
+track(Teams.ChildRemoved:Connect(function(team)
+	if team:IsA("Team") then
+		removeRoleEverywhere(team.Name)
+	end
+end))
+
+local function getCharacter(player)
+	local character = player.Character
+
+	if not character then
+		return nil
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	if not humanoid or humanoid.Health <= 0 then
+		return nil
+	end
+
+	return character
+end
+
+local function getHead(player)
+	local character = getCharacter(player)
+
+	if not character then
+		return nil, nil
+	end
+
+	local head = character:FindFirstChild("Head")
+
+	if not head or not head:IsA("BasePart") then
+		return nil, nil
+	end
+
+	return character, head
+end
+
+local function sameTeam(player)
+	return LocalPlayer.Team ~= nil
+		and player.Team ~= nil
+		and LocalPlayer.Team == player.Team
+end
+
+local function systemActive()
+	return not SYSTEM_CLOSED
+end
+
+local function aimRoleAllowed(player)
+	local roleName = getRoleName(player)
+
+	if aimRoleEnabled[roleName] == nil then
+		aimRoleEnabled[roleName] = true
+	end
+
+	return aimRoleEnabled[roleName]
+end
+
+local function espRoleAllowed(player)
+	local roleName = getRoleName(player)
+
+	if espRoleEnabled[roleName] == nil then
+		espRoleEnabled[roleName] = true
+	end
+
+	return espRoleEnabled[roleName]
+end
+
+local function isVisible(targetPart, targetCharacter)
+	if not WALL_CHECK then
+		return true
+	end
+
+	if not Camera then
+		return false
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.IgnoreWater = true
+
+	local filter = {}
+
+	if LocalPlayer.Character then
+		table.insert(filter, LocalPlayer.Character)
+	end
+
+	params.FilterDescendantsInstances = filter
+
+	local origin = Camera.CFrame.Position
+	local direction = targetPart.Position - origin
+	local result = workspace:Raycast(origin, direction, params)
+
+	if not result then
+		return true
+	end
+
+	return result.Instance:IsDescendantOf(targetCharacter)
+end
+
+local function getScreenCenter()
+	local viewport = Camera.ViewportSize
+	return Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
+end
+
+local function getScreenData(part)
+	local point, onScreen = Camera:WorldToViewportPoint(part.Position)
+
+	if not onScreen or point.Z <= 0 then
+		return nil, nil
+	end
+
+	local screenPoint = Vector2.new(point.X, point.Y)
+	local distanceFromCenter = (screenPoint - getScreenCenter()).Magnitude
+
+	return screenPoint, distanceFromCenter
+end
+
+local function validAimPlayer(player)
+	if player == LocalPlayer then
+		return false
+	end
+
+	if not aimRoleAllowed(player) then
+		return false
+	end
+
+	if AIM_TEAM_CHECK and sameTeam(player) then
+		return false
+	end
+
+	return true
+end
+
+local function findNearestTarget()
+	if not systemActive() or not AIMBOT_ENABLED or not Camera then
+		return nil, nil
+	end
+
+	local cameraPosition = Camera.CFrame.Position
+	local nearestPlayer = nil
+	local nearestHead = nil
+	local nearestWorldDistance = math.huge
+	local nearestScreenDistance = math.huge
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if validAimPlayer(player) then
+			local character, head = getHead(player)
+
+			if character and head then
+				local worldDistance = (head.Position - cameraPosition).Magnitude
+
+				if worldDistance <= MAX_DISTANCE then
+					local _, screenDistance = getScreenData(head)
+
+					if screenDistance and screenDistance <= FOV_SIZE * 0.5 then
+						if isVisible(head, character) then
+							if worldDistance < nearestWorldDistance
+								or (
+									math.abs(worldDistance - nearestWorldDistance) < 0.01
+									and screenDistance < nearestScreenDistance
+								) then
+
+								nearestWorldDistance = worldDistance
+								nearestScreenDistance = screenDistance
+								nearestPlayer = player
+								nearestHead = head
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return nearestPlayer, nearestHead
+end
+
+local function targetStillValid(player, part)
+	if not systemActive() or not AIMBOT_ENABLED then
+		return false
+	end
+
+	if not player or not player.Parent or not validAimPlayer(player) then
+		return false
+	end
+
+	local character, head = getHead(player)
+
+	if not character or not head then
+		return false
+	end
+
+	if part ~= head then
+		return false
+	end
+
+	if (head.Position - Camera.CFrame.Position).Magnitude > MAX_DISTANCE then
+		return false
+	end
+
+	if not isVisible(head, character) then
+		return false
+	end
+
+	return true
+end
+
+local function aimAt(part, deltaTime)
+	if not part or not Camera then
+		return
+	end
+
+	local cameraPosition = Camera.CFrame.Position
+	local desired = CFrame.lookAt(cameraPosition, part.Position)
+
+	if SENSITIVITY <= 1 then
+		Camera.CFrame = desired
+		return
+	end
+
+	local followSpeed = 40 / SENSITIVITY
+	local alpha = 1 - math.exp(-followSpeed * deltaTime)
+
+	Camera.CFrame = Camera.CFrame:Lerp(desired, alpha)
+end
+
+local function updateTargetDot(part)
+	if not part or not Camera or not systemActive() or not AIMBOT_ENABLED then
+		TargetDot.Visible = false
+		return
+	end
+
+	local point, onScreen = Camera:WorldToViewportPoint(part.Position)
+
+	if not onScreen or point.Z <= 0 then
+		TargetDot.Visible = false
+		return
+	end
+
+	TargetDot.Position = UDim2.fromOffset(point.X, point.Y)
+	TargetDot.Visible = true
+end
+
+local function removeHighlight(player)
+	local data = playerHighlights[player]
+
+	if data then
+		if data.Highlight then
+			data.Highlight:Destroy()
+		end
+
+		playerHighlights[player] = nil
+	end
+end
+
+local function removeAllHighlights()
+	for player in pairs(playerHighlights) do
+		removeHighlight(player)
+	end
+end
+
+local function shouldShowESP(player)
+	if not systemActive() or not ESP_ENABLED then
+		return false
+	end
+
+	if player == LocalPlayer then
+		return false
+	end
+
+	if ESP_TEAM_CHECK and sameTeam(player) then
+		return false
+	end
+
+	if not espRoleAllowed(player) then
+		return false
+	end
+
+	return true
+end
+
+local function updatePlayerESP(player)
+	if not shouldShowESP(player) then
+		removeHighlight(player)
+		return
+	end
+
+	local character = getCharacter(player)
+
+	if not character then
+		removeHighlight(player)
+		return
+	end
+
+	local data = playerHighlights[player]
+
+	if data and (not data.Highlight.Parent or data.Character ~= character) then
+		removeHighlight(player)
+		data = nil
+	end
+
+	if not data then
+		local Highlight = Instance.new("Highlight")
+		Highlight.Name = "ClientRoleESP"
+		Highlight.FillTransparency = 1
+		Highlight.OutlineTransparency = 0
+		Highlight.Adornee = character
+		Highlight.Parent = character
+
+		data = {
+			Highlight = Highlight,
+			Character = character
+		}
+
+		playerHighlights[player] = data
+	end
+
+	local highlight = data.Highlight
+	local roleColor = getRoleColor(player)
+
+	highlight.Adornee = character
+	highlight.FillColor = roleColor
+	highlight.OutlineColor = roleColor
+	highlight.FillTransparency = 1
+	highlight.OutlineTransparency = 0
+	highlight.DepthMode = ESP_THROUGH_WALLS
+		and Enum.HighlightDepthMode.AlwaysOnTop
+		or Enum.HighlightDepthMode.Occluded
+	highlight.Enabled = true
+end
+
+local function updateAllESP()
+	if not systemActive() or not ESP_ENABLED then
+		removeAllHighlights()
+		return
+	end
+
+	local present = {}
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		present[player] = true
+		updatePlayerESP(player)
+	end
+
+	for player in pairs(playerHighlights) do
+		if not present[player] then
+			removeHighlight(player)
+		end
+	end
+end
+
+local function disconnectPlayer(player)
+	local list = playerConnections[player]
+
+	if list then
+		for _, connection in ipairs(list) do
+			connection:Disconnect()
+		end
+
+		playerConnections[player] = nil
+	end
+end
+
+local function setupPlayer(player)
+	if player == LocalPlayer then
+		return
+	end
+
+	disconnectPlayer(player)
+
+	local list = {}
+	playerConnections[player] = list
+
+	table.insert(list, player.CharacterAdded:Connect(function()
+		removeHighlight(player)
+
+		task.defer(function()
+			task.wait(0.1)
+
+			if not SYSTEM_CLOSED then
+				updatePlayerESP(player)
+			end
+		end)
+	end))
+
+	table.insert(list, player:GetPropertyChangedSignal("Team"):Connect(function()
+		removeHighlight(player)
+		updatePlayerESP(player)
+
+		if currentTarget == player then
+			currentTarget = nil
+			currentTargetPart = nil
+			TargetDot.Visible = false
+		end
+	end))
+
+	updatePlayerESP(player)
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+	setupPlayer(player)
+end
+
+track(Players.PlayerAdded:Connect(function(player)
+	setupPlayer(player)
+end))
+
+track(Players.PlayerRemoving:Connect(function(player)
+	removeHighlight(player)
+	disconnectPlayer(player)
+
+	if currentTarget == player then
+		currentTarget = nil
+		currentTargetPart = nil
+		TargetDot.Visible = false
+	end
+end))
+
+local draggingWindow = false
+local dragStart = nil
+local startPosition = nil
+
+track(Header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+
+		draggingWindow = true
+		dragStart = input.Position
+		startPosition = Main.Position
+	end
+end))
+
+track(UserInputService.InputChanged:Connect(function(input)
+	if not draggingWindow or not dragStart or not startPosition then
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch then
+
+		local delta = input.Position - dragStart
+		Main.Position = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+	end
+end))
+
+track(UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+
+		draggingWindow = false
+	end
+end))
+
+local function updateFOV()
+	if SYSTEM_CLOSED or not Camera then
+		FOV.Visible = false
+		return
+	end
+
+	local center = getScreenCenter()
+
+	FOV.Size = UDim2.fromOffset(FOV_SIZE, FOV_SIZE)
+	FOV.Position = UDim2.fromOffset(center.X, center.Y)
+	FOV.Visible = true
+end
+
+local function setHidden(hidden)
+	if SYSTEM_CLOSED then
+		return
+	end
+
+	SYSTEM_HIDDEN = hidden
+	Main.Visible = not hidden
+	updateFOV()
+end
+
+local function closeSystem()
+	if SYSTEM_CLOSED then
+		return
+	end
+
+	SYSTEM_CLOSED = true
+	currentTarget = nil
+	currentTargetPart = nil
+
+	removeAllHighlights()
+
+	for player in pairs(playerConnections) do
+		disconnectPlayer(player)
+	end
+
+	for _, connection in ipairs(connections) do
+		connection:Disconnect()
+	end
+
+	table.clear(connections)
+
+	RunService:UnbindFromRenderStep("ThirdPersonCombatMenuRender")
+
+	if ScreenGui then
+		ScreenGui:Destroy()
+	end
+end
+
+track(ExitButton.MouseButton1Click:Connect(function()
+	closeSystem()
+end))
+
+track(ExitButton.MouseEnter:Connect(function()
+	ExitButton.BackgroundColor3 = Color3.fromRGB(170, 50, 75)
+end))
+
+track(ExitButton.MouseLeave:Connect(function()
+	ExitButton.BackgroundColor3 = Color3.fromRGB(136, 42, 62)
+end))
+
+track(UserInputService.InputBegan:Connect(function(input)
+	if input.KeyCode == HIDE_KEY then
+		setHidden(not SYSTEM_HIDDEN)
+	end
+end))
+
+local espTimer = 0
+
+RunService:BindToRenderStep(
+	"ThirdPersonCombatMenuRender",
+	10000,
+	function(deltaTime)
+		if SYSTEM_CLOSED then
+			return
+		end
+
+		Camera = workspace.CurrentCamera
+
+		if not Camera then
+			return
+		end
+
+		updateFOV()
+
+		espTimer += deltaTime
+
+		if espTimer >= 0.12 then
+			espTimer = 0
+			updateAllESP()
+		end
+
+		if not systemActive() or not AIMBOT_ENABLED then
+			currentTarget = nil
+			currentTargetPart = nil
+			TargetDot.Visible = false
+			return
+		end
+
+		local rightMouseDown = UserInputService:IsMouseButtonPressed(AIM_KEY)
+
+		if not rightMouseDown then
+			currentTarget = nil
+			currentTargetPart = nil
+			TargetDot.Visible = false
+			return
+		end
+
+		if currentTarget and currentTargetPart then
+			if not targetStillValid(currentTarget, currentTargetPart) then
+				currentTarget = nil
+				currentTargetPart = nil
+			end
+		end
+
+		if not currentTarget then
+			currentTarget, currentTargetPart = findNearestTarget()
+		end
+
+		if currentTarget and currentTargetPart then
+			aimAt(currentTargetPart, deltaTime)
+			updateTargetDot(currentTargetPart)
+		else
+			TargetDot.Visible = false
+		end
+	end
+)
+
+updateRoleCanvases()
+updateFOV()
+updateAllESP()
