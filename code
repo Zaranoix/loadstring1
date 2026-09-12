@@ -1,0 +1,1645 @@
+local Players = game:GetService("Players")
+local Teams = game:GetService("Teams")
+local TextChatService = game:GetService("TextChatService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Camera = workspace.CurrentCamera
+
+local GUI_NAME = "ClientChatReader"
+local MAX_STORED_MESSAGES = 300
+local MAX_VISIBLE_MESSAGES = 120
+
+local MIN_WIDTH = 500
+local MIN_HEIGHT = 340
+local DEFAULT_WIDTH = 720
+local DEFAULT_HEIGHT = 480
+
+local Theme = {
+	Main = Color3.fromRGB(12, 13, 18),
+	Header = Color3.fromRGB(16, 17, 24),
+	Panel = Color3.fromRGB(17, 18, 25),
+	PanelLight = Color3.fromRGB(23, 24, 33),
+	PanelHover = Color3.fromRGB(28, 30, 40),
+
+	Accent = Color3.fromRGB(84, 128, 255),
+	AccentBright = Color3.fromRGB(105, 151, 255),
+	AccentDark = Color3.fromRGB(43, 65, 125),
+
+	Text = Color3.fromRGB(240, 242, 250),
+	TextSoft = Color3.fromRGB(190, 194, 208),
+	TextMuted = Color3.fromRGB(112, 116, 133),
+
+	Border = Color3.fromRGB(42, 44, 58),
+
+	Red = Color3.fromRGB(214, 67, 86),
+	RedHover = Color3.fromRGB(239, 82, 104),
+
+	Green = Color3.fromRGB(80, 220, 145),
+}
+
+local messages = {}
+local messageCounts = {}
+local tabButtons = {}
+
+local rowPool = {}
+local activeRows = {}
+
+local selectedTab = "GLOBAL"
+local searchQuery = ""
+
+local messageSerial = 0
+
+local draggingWindow = false
+local dragStart = nil
+local startPosition = nil
+
+local resizingWindow = false
+local resizeStart = nil
+local resizeStartSize = nil
+
+local searchGeneration = 0
+
+local oldGui = PlayerGui:FindFirstChild(GUI_NAME)
+
+if oldGui then
+	oldGui:Destroy()
+end
+
+local function create(className, properties, parent)
+	local object = Instance.new(className)
+
+	for property, value in pairs(properties or {}) do
+		object[property] = value
+	end
+
+	if parent then
+		object.Parent = parent
+	end
+
+	return object
+end
+
+local function tween(object, properties, duration)
+	local info = TweenInfo.new(
+		duration or 0.15,
+		Enum.EasingStyle.Quint,
+		Enum.EasingDirection.Out
+	)
+
+	local animation = TweenService:Create(object, info, properties)
+	animation:Play()
+
+	return animation
+end
+
+local function addCorner(parent, radius)
+	return create("UICorner", {
+		CornerRadius = UDim.new(0, radius)
+	}, parent)
+end
+
+local function addStroke(parent, color, transparency, thickness)
+	return create("UIStroke", {
+		Color = color,
+		Transparency = transparency or 0,
+		Thickness = thickness or 1
+	}, parent)
+end
+
+local function escapeRichText(text)
+	text = tostring(text or "")
+	text = text:gsub("&", "&amp;")
+	text = text:gsub("<", "&lt;")
+	text = text:gsub(">", "&gt;")
+	text = text:gsub('"', "&quot;")
+
+	return text
+end
+
+local function getRoleName(player)
+	if player and player.Team then
+		return player.Team.Name
+	end
+
+	return "NO TEAM"
+end
+
+local function getRoleColor(player)
+	if player and player.Team then
+		return player.Team.TeamColor.Color
+	end
+
+	return Color3.fromRGB(165, 168, 185)
+end
+
+local ScreenGui = create("ScreenGui", {
+	Name = GUI_NAME,
+	ResetOnSpawn = false,
+	IgnoreGuiInset = false,
+	DisplayOrder = 1000,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+}, PlayerGui)
+
+local Main = create("Frame", {
+	Name = "Main",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 24, 0.5, 0),
+	Size = UDim2.fromOffset(DEFAULT_WIDTH, DEFAULT_HEIGHT),
+	BackgroundColor3 = Theme.Main,
+	BorderSizePixel = 0,
+	ZIndex = 10
+}, ScreenGui)
+
+addCorner(Main, 14)
+
+local MainScale = create("UIScale", {
+	Scale = 1
+}, Main)
+
+local MainStroke = addStroke(
+	Main,
+	Theme.Border,
+	0.1,
+	1
+)
+
+local Shadow = create("Frame", {
+	Name = "Shadow",
+	Position = UDim2.fromOffset(-10, -10),
+	Size = UDim2.new(1, 20, 1, 20),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+	ZIndex = 9
+}, Main)
+
+addCorner(Shadow, 20)
+
+create("UIGradient", {
+	Rotation = 90,
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(
+			0,
+			Color3.fromRGB(15, 16, 22)
+		),
+		ColorSequenceKeypoint.new(
+			1,
+			Color3.fromRGB(10, 11, 15)
+		)
+	})
+}, Main)
+
+local Header = create("Frame", {
+	Name = "Header",
+	Size = UDim2.new(1, 0, 0, 60),
+	BackgroundColor3 = Theme.Header,
+	BorderSizePixel = 0,
+	Active = true,
+	ZIndex = 12
+}, Main)
+
+addCorner(Header, 14)
+
+create("Frame", {
+	Position = UDim2.new(0, 0, 1, -14),
+	Size = UDim2.new(1, 0, 0, 14),
+	BackgroundColor3 = Theme.Header,
+	BorderSizePixel = 0,
+	ZIndex = 12
+}, Header)
+
+create("Frame", {
+	Position = UDim2.new(0, 0, 1, -1),
+	Size = UDim2.new(1, 0, 0, 1),
+	BackgroundColor3 = Theme.Border,
+	BackgroundTransparency = 0.25,
+	BorderSizePixel = 0,
+	ZIndex = 14
+}, Header)
+
+local CloseButton = create("TextButton", {
+	Name = "CloseButton",
+	Position = UDim2.fromOffset(12, 14),
+	Size = UDim2.fromOffset(32, 32),
+	BackgroundColor3 = Theme.Red,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	Text = "×",
+	TextColor3 = Color3.new(1, 1, 1),
+	TextSize = 21,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 20
+}, Header)
+
+addCorner(CloseButton, 8)
+
+addStroke(
+	CloseButton,
+	Color3.fromRGB(255, 116, 131),
+	0.55,
+	1
+)
+
+local Logo = create("Frame", {
+	Position = UDim2.fromOffset(56, 15),
+	Size = UDim2.fromOffset(30, 30),
+	BackgroundColor3 = Theme.Accent,
+	BorderSizePixel = 0,
+	ZIndex = 15
+}, Header)
+
+addCorner(Logo, 8)
+
+create("UIGradient", {
+	Rotation = 45,
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(
+			0,
+			Theme.AccentBright
+		),
+		ColorSequenceKeypoint.new(
+			1,
+			Color3.fromRGB(89, 85, 255)
+		)
+	})
+}, Logo)
+
+create("TextLabel", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	Text = "C",
+	TextColor3 = Color3.new(1, 1, 1),
+	TextSize = 15,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 16
+}, Logo)
+
+create("TextLabel", {
+	Position = UDim2.fromOffset(98, 10),
+	Size = UDim2.new(1, -290, 0, 22),
+	BackgroundTransparency = 1,
+	Text = "COMMUNICATIONS MONITOR",
+	TextColor3 = Theme.Text,
+	TextSize = 15,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+	ZIndex = 15
+}, Header)
+
+create("TextLabel", {
+	Position = UDim2.fromOffset(98, 31),
+	Size = UDim2.new(1, -290, 0, 17),
+	BackgroundTransparency = 1,
+	Text = "LIVE SERVER CHAT READER",
+	TextColor3 = Theme.TextMuted,
+	TextSize = 9,
+	Font = Enum.Font.GothamMedium,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 15
+}, Header)
+
+local HeaderCount = create("TextLabel", {
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -112, 0.5, 0),
+	Size = UDim2.fromOffset(90, 24),
+	BackgroundColor3 = Theme.PanelLight,
+	BorderSizePixel = 0,
+	Text = "0 MSG",
+	TextColor3 = Theme.TextSoft,
+	TextSize = 9,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 15
+}, Header)
+
+addCorner(HeaderCount, 7)
+addStroke(HeaderCount, Theme.Border, 0.4, 1)
+
+local LiveDot = create("Frame", {
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(1, -95, 0.5, 0),
+	Size = UDim2.fromOffset(7, 7),
+	BackgroundColor3 = Theme.Green,
+	BorderSizePixel = 0,
+	ZIndex = 15
+}, Header)
+
+addCorner(LiveDot, 10)
+
+create("TextLabel", {
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(1, -82, 0.5, 0),
+	Size = UDim2.fromOffset(55, 24),
+	BackgroundTransparency = 1,
+	Text = "LIVE",
+	TextColor3 = Theme.Green,
+	TextSize = 9,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 15
+}, Header)
+
+local Tabs = create("ScrollingFrame", {
+	Name = "Tabs",
+	Position = UDim2.fromOffset(12, 72),
+	Size = UDim2.new(1, -24, 0, 42),
+	BackgroundColor3 = Theme.Panel,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 2,
+	ScrollBarImageColor3 = Theme.Accent,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	CanvasSize = UDim2.new(),
+	ZIndex = 12
+}, Main)
+
+addCorner(Tabs, 9)
+addStroke(Tabs, Theme.Border, 0.4, 1)
+
+create("UIPadding", {
+	PaddingLeft = UDim.new(0, 6),
+	PaddingRight = UDim.new(0, 6),
+	PaddingTop = UDim.new(0, 6),
+	PaddingBottom = UDim.new(0, 6)
+}, Tabs)
+
+local TabsLayout = create("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 6),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	VerticalAlignment = Enum.VerticalAlignment.Center
+}, Tabs)
+
+local Toolbar = create("Frame", {
+	Position = UDim2.fromOffset(12, 122),
+	Size = UDim2.new(1, -24, 0, 36),
+	BackgroundTransparency = 1,
+	ZIndex = 12
+}, Main)
+
+local SearchFrame = create("Frame", {
+	Size = UDim2.new(1, -104, 1, 0),
+	BackgroundColor3 = Theme.Panel,
+	BorderSizePixel = 0,
+	ZIndex = 12
+}, Toolbar)
+
+addCorner(SearchFrame, 8)
+
+local SearchStroke = addStroke(
+	SearchFrame,
+	Theme.Border,
+	0.35,
+	1
+)
+
+local SearchIcon = create("TextLabel", {
+	Position = UDim2.fromOffset(10, 0),
+	Size = UDim2.fromOffset(24, 36),
+	BackgroundTransparency = 1,
+	Text = "⌕",
+	TextColor3 = Theme.TextMuted,
+	TextSize = 20,
+	Font = Enum.Font.GothamMedium,
+	ZIndex = 13
+}, SearchFrame)
+
+local SearchBox = create("TextBox", {
+	Position = UDim2.fromOffset(36, 0),
+	Size = UDim2.new(1, -44, 1, 0),
+	BackgroundTransparency = 1,
+	ClearTextOnFocus = false,
+	Text = "",
+	PlaceholderText = "Search messages, users or roles...",
+	PlaceholderColor3 = Theme.TextMuted,
+	TextColor3 = Theme.Text,
+	TextSize = 11,
+	Font = Enum.Font.Gotham,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 13
+}, SearchFrame)
+
+local ClearButton = create("TextButton", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, 0, 0, 0),
+	Size = UDim2.fromOffset(94, 36),
+	BackgroundColor3 = Theme.PanelLight,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	Text = "CLEAR",
+	TextColor3 = Theme.TextSoft,
+	TextSize = 9,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 13
+}, Toolbar)
+
+addCorner(ClearButton, 8)
+
+local ClearStroke = addStroke(
+	ClearButton,
+	Theme.Border,
+	0.35,
+	1
+)
+
+local MessageList = create("ScrollingFrame", {
+	Name = "MessageList",
+	Position = UDim2.fromOffset(12, 168),
+	Size = UDim2.new(1, -24, 1, -204),
+	BackgroundColor3 = Color3.fromRGB(13, 14, 19),
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = Theme.Accent,
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ZIndex = 12
+}, Main)
+
+addCorner(MessageList, 10)
+addStroke(MessageList, Theme.Border, 0.45, 1)
+
+create("UIPadding", {
+	PaddingTop = UDim.new(0, 8),
+	PaddingBottom = UDim.new(0, 8),
+	PaddingLeft = UDim.new(0, 8),
+	PaddingRight = UDim.new(0, 8)
+}, MessageList)
+
+local MessageLayout = create("UIListLayout", {
+	Padding = UDim.new(0, 6),
+	SortOrder = Enum.SortOrder.LayoutOrder
+}, MessageList)
+
+local EmptyState = create("Frame", {
+	Name = "EmptyState",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(280, 90),
+	BackgroundTransparency = 1,
+	Visible = true,
+	ZIndex = 14
+}, MessageList)
+
+create("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 38),
+	BackgroundTransparency = 1,
+	Text = "◇",
+	TextColor3 = Theme.TextMuted,
+	TextSize = 30,
+	Font = Enum.Font.Gotham,
+	ZIndex = 14
+}, EmptyState)
+
+local EmptyTitle = create("TextLabel", {
+	Position = UDim2.fromOffset(0, 37),
+	Size = UDim2.new(1, 0, 0, 20),
+	BackgroundTransparency = 1,
+	Text = "NO MESSAGES",
+	TextColor3 = Theme.TextSoft,
+	TextSize = 11,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 14
+}, EmptyState)
+
+local EmptySubtitle = create("TextLabel", {
+	Position = UDim2.fromOffset(0, 59),
+	Size = UDim2.new(1, 0, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "Waiting for server communication",
+	TextColor3 = Theme.TextMuted,
+	TextSize = 9,
+	Font = Enum.Font.Gotham,
+	ZIndex = 14
+}, EmptyState)
+
+local Footer = create("Frame", {
+	Position = UDim2.new(0, 14, 1, -29),
+	Size = UDim2.new(1, -48, 0, 18),
+	BackgroundTransparency = 1,
+	ZIndex = 12
+}, Main)
+
+local StatsLabel = create("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "GLOBAL • 0 VISIBLE • 0 STORED",
+	TextColor3 = Theme.TextMuted,
+	TextSize = 8,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 12
+}, Footer)
+
+local ResizeHandle = create("TextButton", {
+	Name = "ResizeHandle",
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, -5, 1, -5),
+	Size = UDim2.fromOffset(26, 26),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	Text = "◢",
+	TextColor3 = Theme.TextMuted,
+	TextSize = 18,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 30
+}, Main)
+
+local function getCount(name)
+	if name == "GLOBAL" then
+		return #messages
+	end
+
+	return messageCounts[name] or 0
+end
+
+local function incrementCount(name, amount)
+	messageCounts[name] = math.max(
+		0,
+		(messageCounts[name] or 0) + amount
+	)
+end
+
+local function messageMatches(packet)
+	if selectedTab ~= "GLOBAL" and packet.TeamName ~= selectedTab then
+		return false
+	end
+
+	if searchQuery == "" then
+		return true
+	end
+
+	return string.find(
+		packet.SearchText,
+		searchQuery,
+		1,
+		true
+	) ~= nil
+end
+
+local function createMessageRow()
+	local Root = create("Frame", {
+		Name = "MessageRow",
+		Size = UDim2.new(1, -2, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = Theme.Panel,
+		BorderSizePixel = 0,
+		Visible = false,
+		ZIndex = 13
+	})
+
+	addCorner(Root, 9)
+
+	local Stroke = addStroke(
+		Root,
+		Theme.Border,
+		0.6,
+		1
+	)
+
+	local Accent = create("Frame", {
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(0, 3, 1, 0),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		ZIndex = 14
+	}, Root)
+
+	addCorner(Accent, 8)
+
+	local Content = create("Frame", {
+		Position = UDim2.fromOffset(7, 0),
+		Size = UDim2.new(1, -7, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		ZIndex = 14
+	}, Root)
+
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 8),
+		PaddingBottom = UDim.new(0, 8),
+		PaddingLeft = UDim.new(0, 9),
+		PaddingRight = UDim.new(0, 10)
+	}, Content)
+
+	create("UIListLayout", {
+		Padding = UDim.new(0, 5),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	}, Content)
+
+	local Top = create("Frame", {
+		Name = "Top",
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundTransparency = 1,
+		LayoutOrder = 1,
+		ZIndex = 15
+	}, Content)
+
+	local Role = create("TextLabel", {
+		Name = "Role",
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(80, 20),
+		BackgroundColor3 = Theme.AccentDark,
+		BorderSizePixel = 0,
+		Text = "ROLE",
+		TextColor3 = Color3.new(1, 1, 1),
+		TextSize = 9,
+		Font = Enum.Font.GothamBold,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		ZIndex = 16
+	}, Top)
+
+	addCorner(Role, 6)
+
+	local RoleStroke = addStroke(
+		Role,
+		Theme.Accent,
+		0.5,
+		1
+	)
+
+	local Identity = create("TextLabel", {
+		Name = "Identity",
+		Position = UDim2.fromOffset(88, 0),
+		Size = UDim2.new(1, -150, 0, 20),
+		BackgroundTransparency = 1,
+		RichText = true,
+		Text = "",
+		TextColor3 = Theme.Text,
+		TextSize = 11,
+		Font = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		ZIndex = 16
+	}, Top)
+
+	local Time = create("TextLabel", {
+		Name = "Time",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 0),
+		Size = UDim2.fromOffset(52, 20),
+		BackgroundTransparency = 1,
+		Text = "00:00",
+		TextColor3 = Theme.TextMuted,
+		TextSize = 9,
+		Font = Enum.Font.GothamMedium,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ZIndex = 16
+	}, Top)
+
+	local Message = create("TextLabel", {
+		Name = "Message",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Theme.TextSoft,
+		TextSize = 11,
+		Font = Enum.Font.Gotham,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		LayoutOrder = 2,
+		ZIndex = 15
+	}, Content)
+
+	Root.MouseEnter:Connect(function()
+		if Root.Visible then
+			tween(
+				Root,
+				{
+					BackgroundColor3 = Theme.PanelHover
+				},
+				0.12
+			)
+
+			tween(
+				Stroke,
+				{
+					Transparency = 0.3
+				},
+				0.12
+			)
+		end
+	end)
+
+	Root.MouseLeave:Connect(function()
+		if Root.Visible then
+			tween(
+				Root,
+				{
+					BackgroundColor3 = Theme.Panel
+				},
+				0.16
+			)
+
+			tween(
+				Stroke,
+				{
+					Transparency = 0.6
+				},
+				0.16
+			)
+		end
+	end)
+
+	return {
+		Root = Root,
+		Accent = Accent,
+		Stroke = Stroke,
+		Role = Role,
+		RoleStroke = RoleStroke,
+		Identity = Identity,
+		Time = Time,
+		Message = Message
+	}
+end
+
+local function acquireRow()
+	local row = table.remove(rowPool)
+
+	if not row then
+		row = createMessageRow()
+	end
+
+	row.Root.Visible = true
+	row.Root.Parent = MessageList
+
+	return row
+end
+
+local function releaseRow(row)
+	row.Root.Visible = false
+	row.Root.Parent = nil
+	row.Root.BackgroundColor3 = Theme.Panel
+	row.Stroke.Transparency = 0.6
+
+	table.insert(rowPool, row)
+end
+
+local function releaseAllRows()
+	for i = #activeRows, 1, -1 do
+		local row = activeRows[i]
+		activeRows[i] = nil
+
+		releaseRow(row)
+	end
+end
+
+local function applyPacketToRow(row, packet)
+	local roleWidth = math.clamp(
+		#packet.TeamName * 6 + 24,
+		68,
+		150
+	)
+
+	row.Root.LayoutOrder = packet.Serial
+
+	row.Accent.BackgroundColor3 = packet.RoleColor
+
+	row.Role.Size = UDim2.fromOffset(
+		roleWidth,
+		20
+	)
+
+	row.Role.BackgroundColor3 = packet.RoleColor:Lerp(
+		Theme.Panel,
+		0.78
+	)
+
+	row.Role.TextColor3 = packet.RoleColor:Lerp(
+		Color3.new(1, 1, 1),
+		0.55
+	)
+
+	row.Role.Text = packet.TeamName
+	row.RoleStroke.Color = packet.RoleColor
+
+	row.Identity.Position = UDim2.fromOffset(
+		roleWidth + 8,
+		0
+	)
+
+	row.Identity.Size = UDim2.new(
+		1,
+		-roleWidth - 70,
+		0,
+		20
+	)
+
+	row.Identity.Text = string.format(
+		'<font color="#F2F3F8"><b>%s</b></font>  <font color="#797D91">@%s</font>',
+		escapeRichText(packet.DisplayName),
+		escapeRichText(packet.Username)
+	)
+
+	row.Time.Text = packet.Time
+	row.Message.Text = packet.Text
+end
+
+local function updateEmptyState()
+	if #activeRows > 0 then
+		EmptyState.Visible = false
+		return
+	end
+
+	EmptyState.Visible = true
+
+	if searchQuery ~= "" then
+		EmptyTitle.Text = "NO RESULTS"
+		EmptySubtitle.Text = "No stored messages match your search"
+	elseif selectedTab ~= "GLOBAL" then
+		EmptyTitle.Text = "NO MESSAGES"
+		EmptySubtitle.Text = "No stored messages from " .. selectedTab
+	else
+		EmptyTitle.Text = "NO MESSAGES"
+		EmptySubtitle.Text = "Waiting for server communication"
+	end
+end
+
+local function updateStats()
+	HeaderCount.Text = tostring(#messages) .. " MSG"
+
+	StatsLabel.Text = string.format(
+		"%s  •  %d VISIBLE  •  %d STORED",
+		selectedTab,
+		#activeRows,
+		#messages
+	)
+
+	updateEmptyState()
+end
+
+local function updateTabCounts()
+	for name, data in pairs(tabButtons) do
+		data.Count.Text = tostring(
+			getCount(name)
+		)
+	end
+end
+
+local function scrollToBottom()
+	task.defer(function()
+		task.wait()
+
+		local contentHeight =
+			MessageLayout.AbsoluteContentSize.Y
+
+		local windowHeight =
+			MessageList.AbsoluteWindowSize.Y
+
+		local y = math.max(
+			0,
+			contentHeight - windowHeight + 18
+		)
+
+		MessageList.CanvasPosition = Vector2.new(
+			0,
+			y
+		)
+	end)
+end
+
+local function renderMessages()
+	releaseAllRows()
+
+	local matching = {}
+
+	for index = #messages, 1, -1 do
+		local packet = messages[index]
+
+		if messageMatches(packet) then
+			table.insert(
+				matching,
+				packet
+			)
+
+			if #matching >= MAX_VISIBLE_MESSAGES then
+				break
+			end
+		end
+	end
+
+	for index = #matching, 1, -1 do
+		local packet = matching[index]
+		local row = acquireRow()
+
+		applyPacketToRow(
+			row,
+			packet
+		)
+
+		table.insert(
+			activeRows,
+			row
+		)
+	end
+
+	updateStats()
+	updateTabCounts()
+
+	if #activeRows > 0 then
+		scrollToBottom()
+	end
+end
+
+local function updateTabVisuals()
+	for name, data in pairs(tabButtons) do
+		local selected = name == selectedTab
+
+		if selected then
+			data.Button.BackgroundColor3 =
+				Theme.PanelHover
+
+			data.Stroke.Color =
+				Theme.Accent
+
+			data.Stroke.Transparency =
+				0.25
+
+			data.Label.TextColor3 =
+				Theme.Text
+
+			data.CountFrame.BackgroundColor3 =
+				Theme.AccentDark
+
+			data.Count.TextColor3 =
+				Theme.AccentBright
+		else
+			data.Button.BackgroundColor3 =
+				Theme.PanelLight
+
+			data.Stroke.Color =
+				Theme.Border
+
+			data.Stroke.Transparency =
+				0.6
+
+			data.Label.TextColor3 =
+				data.Color
+
+			data.CountFrame.BackgroundColor3 =
+				Color3.fromRGB(31, 32, 42)
+
+			data.Count.TextColor3 =
+				Theme.TextMuted
+		end
+	end
+end
+
+local function selectTab(name)
+	if not tabButtons[name] then
+		return
+	end
+
+	selectedTab = name
+
+	updateTabVisuals()
+	renderMessages()
+end
+
+local function clearTabs()
+	for _, data in pairs(tabButtons) do
+		if data.Button then
+			data.Button:Destroy()
+		end
+	end
+
+	table.clear(tabButtons)
+end
+
+local function makeTab(name, color, layoutOrder)
+	local buttonWidth = math.clamp(
+		#name * 7 + 68,
+		100,
+		190
+	)
+
+	local Button = create("TextButton", {
+		Name = name,
+		Size = UDim2.fromOffset(buttonWidth, 30),
+		BackgroundColor3 = Theme.PanelLight,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		LayoutOrder = layoutOrder,
+		ZIndex = 13
+	}, Tabs)
+
+	addCorner(Button, 7)
+
+	local Stroke = addStroke(
+		Button,
+		Theme.Border,
+		0.6,
+		1
+	)
+
+	local Dot = create("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 9, 0.5, 0),
+		Size = UDim2.fromOffset(6, 6),
+		BackgroundColor3 = color,
+		BorderSizePixel = 0,
+		ZIndex = 14
+	}, Button)
+
+	addCorner(Dot, 10)
+
+	local Label = create("TextLabel", {
+		Position = UDim2.fromOffset(21, 0),
+		Size = UDim2.new(1, -53, 1, 0),
+		BackgroundTransparency = 1,
+		Text = name,
+		TextColor3 = color,
+		TextSize = 9,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		ZIndex = 14
+	}, Button)
+
+	local CountFrame = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -6, 0.5, 0),
+		Size = UDim2.fromOffset(25, 18),
+		BackgroundColor3 = Color3.fromRGB(31, 32, 42),
+		BorderSizePixel = 0,
+		ZIndex = 14
+	}, Button)
+
+	addCorner(CountFrame, 5)
+
+	local Count = create("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "0",
+		TextColor3 = Theme.TextMuted,
+		TextSize = 8,
+		Font = Enum.Font.GothamBold,
+		ZIndex = 15
+	}, CountFrame)
+
+	tabButtons[name] = {
+		Button = Button,
+		Stroke = Stroke,
+		Label = Label,
+		Count = Count,
+		CountFrame = CountFrame,
+		Dot = Dot,
+		Color = color
+	}
+
+	Button.MouseButton1Click:Connect(function()
+		selectTab(name)
+	end)
+
+	Button.MouseEnter:Connect(function()
+		if selectedTab ~= name then
+			tween(
+				Button,
+				{
+					BackgroundColor3 = Theme.PanelHover
+				},
+				0.12
+			)
+		end
+	end)
+
+	Button.MouseLeave:Connect(function()
+		if selectedTab ~= name then
+			tween(
+				Button,
+				{
+					BackgroundColor3 = Theme.PanelLight
+				},
+				0.15
+			)
+		end
+	end)
+end
+
+local function rebuildTabs()
+	local previousTab = selectedTab
+
+	clearTabs()
+
+	makeTab(
+		"GLOBAL",
+		Theme.AccentBright,
+		1
+	)
+
+	local teamList = {}
+
+	for _, team in ipairs(Teams:GetChildren()) do
+		if team:IsA("Team") then
+			table.insert(
+				teamList,
+				team
+			)
+		end
+	end
+
+	table.sort(
+		teamList,
+		function(a, b)
+			return a.Name:lower() < b.Name:lower()
+		end
+	)
+
+	for index, team in ipairs(teamList) do
+		makeTab(
+			team.Name,
+			team.TeamColor.Color,
+			index + 1
+		)
+	end
+
+	makeTab(
+		"NO TEAM",
+		Color3.fromRGB(170, 174, 190),
+		#teamList + 2
+	)
+
+	if tabButtons[previousTab] then
+		selectedTab = previousTab
+	else
+		selectedTab = "GLOBAL"
+	end
+
+	updateTabVisuals()
+	updateTabCounts()
+
+	task.defer(function()
+		Tabs.CanvasSize = UDim2.fromOffset(
+			TabsLayout.AbsoluteContentSize.X + 12,
+			0
+		)
+	end)
+end
+
+local function addVisiblePacket(packet)
+	if not messageMatches(packet) then
+		updateStats()
+		updateTabCounts()
+		return
+	end
+
+	while #activeRows >= MAX_VISIBLE_MESSAGES do
+		local oldestRow = table.remove(
+			activeRows,
+			1
+		)
+
+		releaseRow(oldestRow)
+	end
+
+	local row = acquireRow()
+
+	applyPacketToRow(
+		row,
+		packet
+	)
+
+	table.insert(
+		activeRows,
+		row
+	)
+
+	updateStats()
+	updateTabCounts()
+	scrollToBottom()
+end
+
+local function addPacket(packet)
+	messageSerial += 1
+	packet.Serial = messageSerial
+
+	packet.SearchText = string.lower(
+		packet.Username
+			.. " "
+			.. packet.DisplayName
+			.. " "
+			.. packet.TeamName
+			.. " "
+			.. packet.Text
+	)
+
+	table.insert(
+		messages,
+		packet
+	)
+
+	incrementCount(
+		packet.TeamName,
+		1
+	)
+
+	while #messages > MAX_STORED_MESSAGES do
+		local removed = table.remove(
+			messages,
+			1
+		)
+
+		if removed then
+			incrementCount(
+				removed.TeamName,
+				-1
+			)
+		end
+	end
+
+	addVisiblePacket(packet)
+end
+
+local function clearMessages()
+	table.clear(messages)
+	table.clear(messageCounts)
+
+	releaseAllRows()
+
+	updateTabCounts()
+	updateStats()
+
+	MessageList.CanvasPosition = Vector2.new()
+end
+
+local function updateScale()
+	if not Camera then
+		return
+	end
+
+	local viewportWidth = Camera.ViewportSize.X
+
+	if viewportWidth < 800 then
+		MainScale.Scale = math.clamp(
+			viewportWidth / 800,
+			0.65,
+			1
+		)
+	else
+		MainScale.Scale = 1
+	end
+end
+
+local function resizeWindow(delta)
+	local scale = MainScale.Scale
+
+	if scale <= 0 then
+		scale = 1
+	end
+
+	local adjustedDelta = delta / scale
+
+	local newWidth =
+		resizeStartSize.X.Offset
+		+ adjustedDelta.X
+
+	local newHeight =
+		resizeStartSize.Y.Offset
+		+ adjustedDelta.Y
+
+	local maxWidth = 1600
+	local maxHeight = 1000
+
+	if Camera then
+		maxWidth = math.max(
+			MIN_WIDTH,
+			Camera.ViewportSize.X / scale - 25
+		)
+
+		maxHeight = math.max(
+			MIN_HEIGHT,
+			Camera.ViewportSize.Y / scale - 25
+		)
+	end
+
+	newWidth = math.clamp(
+		newWidth,
+		MIN_WIDTH,
+		maxWidth
+	)
+
+	newHeight = math.clamp(
+		newHeight,
+		MIN_HEIGHT,
+		maxHeight
+	)
+
+	Main.Size = UDim2.fromOffset(
+		newWidth,
+		newHeight
+	)
+end
+
+CloseButton.MouseEnter:Connect(function()
+	tween(
+		CloseButton,
+		{
+			BackgroundColor3 = Theme.RedHover
+		},
+		0.12
+	)
+end)
+
+CloseButton.MouseLeave:Connect(function()
+	tween(
+		CloseButton,
+		{
+			BackgroundColor3 = Theme.Red
+		},
+		0.15
+	)
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+	ScreenGui:Destroy()
+end)
+
+ClearButton.MouseEnter:Connect(function()
+	tween(
+		ClearButton,
+		{
+			BackgroundColor3 = Theme.PanelHover
+		},
+		0.12
+	)
+
+	tween(
+		ClearStroke,
+		{
+			Color = Theme.Accent,
+			Transparency = 0.25
+		},
+		0.12
+	)
+end)
+
+ClearButton.MouseLeave:Connect(function()
+	tween(
+		ClearButton,
+		{
+			BackgroundColor3 = Theme.PanelLight
+		},
+		0.15
+	)
+
+	tween(
+		ClearStroke,
+		{
+			Color = Theme.Border,
+			Transparency = 0.35
+		},
+		0.15
+	)
+end)
+
+ClearButton.MouseButton1Click:Connect(function()
+	clearMessages()
+end)
+
+SearchBox.Focused:Connect(function()
+	tween(
+		SearchStroke,
+		{
+			Color = Theme.Accent,
+			Transparency = 0.15
+		},
+		0.12
+	)
+
+	tween(
+		SearchIcon,
+		{
+			TextColor3 = Theme.AccentBright
+		},
+		0.12
+	)
+end)
+
+SearchBox.FocusLost:Connect(function()
+	tween(
+		SearchStroke,
+		{
+			Color = Theme.Border,
+			Transparency = 0.35
+		},
+		0.15
+	)
+
+	tween(
+		SearchIcon,
+		{
+			TextColor3 = Theme.TextMuted
+		},
+		0.15
+	)
+end)
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	searchGeneration += 1
+
+	local generation = searchGeneration
+
+	task.delay(0.07, function()
+		if generation ~= searchGeneration then
+			return
+		end
+
+		searchQuery = string.lower(
+			SearchBox.Text
+		)
+
+		renderMessages()
+	end)
+end)
+
+ResizeHandle.MouseEnter:Connect(function()
+	tween(
+		ResizeHandle,
+		{
+			TextColor3 = Theme.AccentBright
+		},
+		0.12
+	)
+end)
+
+ResizeHandle.MouseLeave:Connect(function()
+	if not resizingWindow then
+		tween(
+			ResizeHandle,
+			{
+				TextColor3 = Theme.TextMuted
+			},
+			0.15
+		)
+	end
+end)
+
+ResizeHandle.InputBegan:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+
+	resizingWindow = true
+	draggingWindow = false
+
+	resizeStart = input.Position
+	resizeStartSize = Main.Size
+
+	ResizeHandle.TextColor3 = Theme.AccentBright
+end)
+
+Header.InputBegan:Connect(function(input)
+	if resizingWindow then
+		return
+	end
+
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+
+	local inputPosition = input.Position
+
+	local closePosition = CloseButton.AbsolutePosition
+	local closeSize = CloseButton.AbsoluteSize
+
+	if inputPosition.X >= closePosition.X
+		and inputPosition.X <= closePosition.X + closeSize.X
+		and inputPosition.Y >= closePosition.Y
+		and inputPosition.Y <= closePosition.Y + closeSize.Y then
+		return
+	end
+
+	draggingWindow = true
+	dragStart = input.Position
+	startPosition = Main.Position
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement
+		and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+
+	if resizingWindow
+		and resizeStart
+		and resizeStartSize then
+
+		local delta =
+			input.Position
+			- resizeStart
+
+		resizeWindow(delta)
+		return
+	end
+
+	if draggingWindow
+		and dragStart
+		and startPosition then
+
+		local delta =
+			input.Position
+			- dragStart
+
+		Main.Position = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+
+		if resizingWindow then
+			resizingWindow = false
+			resizeStart = nil
+			resizeStartSize = nil
+
+			tween(
+				ResizeHandle,
+				{
+					TextColor3 = Theme.TextMuted
+				},
+				0.15
+			)
+		end
+
+		if draggingWindow then
+			draggingWindow = false
+			dragStart = nil
+			startPosition = nil
+		end
+	end
+end)
+
+TextChatService.MessageReceived:Connect(function(message)
+	local textSource = message.TextSource
+
+	if not textSource then
+		return
+	end
+
+	local speaker = Players:GetPlayerByUserId(
+		textSource.UserId
+	)
+
+	if not speaker then
+		return
+	end
+
+	local packet = {
+		UserId = speaker.UserId,
+		Username = speaker.Name,
+		DisplayName = speaker.DisplayName,
+		TeamName = getRoleName(speaker),
+		RoleColor = getRoleColor(speaker),
+		Text = tostring(message.Text or ""),
+		Time = os.date("%H:%M")
+	}
+
+	addPacket(packet)
+end)
+
+Teams.ChildAdded:Connect(function(child)
+	if child:IsA("Team") then
+		rebuildTabs()
+	end
+end)
+
+Teams.ChildRemoved:Connect(function(child)
+	if not child:IsA("Team") then
+		return
+	end
+
+	rebuildTabs()
+	renderMessages()
+end)
+
+TabsLayout:GetPropertyChangedSignal(
+	"AbsoluteContentSize"
+):Connect(function()
+	Tabs.CanvasSize = UDim2.fromOffset(
+		TabsLayout.AbsoluteContentSize.X + 12,
+		0
+	)
+end)
+
+if Camera then
+	Camera:GetPropertyChangedSignal(
+		"ViewportSize"
+	):Connect(updateScale)
+end
+
+updateScale()
+rebuildTabs()
+renderMessages()
